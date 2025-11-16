@@ -1,10 +1,11 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, router } from "./_core/trpc";
+import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
+import { createPrediction, getPredictionsByUserId, getUserSubscription } from "./db";
+import { makePrediction, validatePredictionInput } from "./services/mlPredictionService";
 
 export const appRouter = router({
-    // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
@@ -17,12 +18,52 @@ export const appRouter = router({
     }),
   }),
 
-  // TODO: add feature routers here, e.g.
-  // todo: router({
-  //   list: protectedProcedure.query(({ ctx }) =>
-  //     db.getUserTodos(ctx.user.id)
-  //   ),
-  // }),
+  predictions: router({
+    create: protectedProcedure
+      .input((val: any) => val)
+      .mutation(async ({ ctx, input }) => {
+        const validationError = validatePredictionInput(input);
+        if (validationError) {
+          throw new Error(validationError);
+        }
+
+        const prediction = makePrediction(input);
+        
+        const dbPrediction = await createPrediction({
+          userId: ctx.user.id,
+          horseName: input.horseName,
+          track: input.track,
+          raceType: input.raceType,
+          distance: input.distance,
+          raceDate: input.raceDate,
+          daysSinceLastRace: input.daysSinceLastRace,
+          winningStreak: input.winningStreak,
+          losingStreak: input.losingStreak,
+          lightgbmProbability: prediction.lightgbmProbability,
+          randomForestProbability: prediction.randomForestProbability,
+          gradientBoostingProbability: prediction.gradientBoostingProbability,
+          logisticRegressionProbability: prediction.logisticRegressionProbability,
+          ensembleProbability: prediction.ensembleProbability,
+          confidence: prediction.confidence,
+          modelExplanation: prediction.modelExplanation,
+        });
+
+        return dbPrediction;
+      }),
+    
+    list: protectedProcedure
+      .input((val: any) => ({ limit: val?.limit || 50 }))
+      .query(async ({ ctx, input }) => {
+        return await getPredictionsByUserId(ctx.user.id, input.limit);
+      }),
+  }),
+
+  subscriptions: router({
+    getCurrent: protectedProcedure
+      .query(async ({ ctx }) => {
+        return await getUserSubscription(ctx.user.id);
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

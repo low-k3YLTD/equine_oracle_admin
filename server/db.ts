@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { InsertUser, users, predictions, userSubscriptions, subscriptionTiers, InsertPrediction, Prediction } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,4 +89,66 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+export async function createPrediction(prediction: InsertPrediction): Promise<Prediction | null> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot create prediction: database not available");
+    return null;
+  }
+
+  try {
+    const result = await db.insert(predictions).values(prediction);
+    const newPrediction = await db.select().from(predictions).where(eq(predictions.id, result[0].insertId as any)).limit(1);
+    return newPrediction.length > 0 ? newPrediction[0] : null;
+  } catch (error) {
+    console.error("[Database] Failed to create prediction:", error);
+    throw error;
+  }
+}
+
+export async function getPredictionsByUserId(userId: number, limit: number = 50): Promise<Prediction[]> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get predictions: database not available");
+    return [];
+  }
+
+  try {
+    return await db.select().from(predictions).where(eq(predictions.userId, userId)).orderBy(desc(predictions.createdAt)).limit(limit);
+  } catch (error) {
+    console.error("[Database] Failed to get predictions:", error);
+    return [];
+  }
+}
+
+export async function getUserSubscription(userId: number) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get subscription: database not available");
+    return undefined;
+  }
+
+  try {
+    const result = await db.select().from(userSubscriptions).where(eq(userSubscriptions.userId, userId)).limit(1);
+    return result.length > 0 ? result[0] : undefined;
+  } catch (error) {
+    console.error("[Database] Failed to get subscription:", error);
+    return undefined;
+  }
+}
+
+export async function getSubscriptionTier(tierName: string) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get tier: database not available");
+    return undefined;
+  }
+
+  try {
+    const result = await db.select().from(subscriptionTiers).where(eq(subscriptionTiers.name, tierName as any)).limit(1);
+    return result.length > 0 ? result[0] : undefined;
+  } catch (error) {
+    console.error("[Database] Failed to get tier:", error);
+    return undefined;
+  }
+}
