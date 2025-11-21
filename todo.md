@@ -36,3 +36,26 @@
 - [ ] Verify database operations
 - [ ] Performance testing
 - [ ] Create checkpoint for deployment
+
+
+## Phase 6: Live Data Integration & CSV Upload
+- [ ] Implement LivePredictor page with live race data fetching
+- [ ] Create CSV upload interface for batch predictions
+- [ ] Integrate data validator for CSV validation
+- [ ] Add live data API service integration
+- [ ] Create tRPC procedures for CSV upload and live data
+
+## Phase 7: Advanced Features
+- [ ] Implement sync scheduler for automatic data updates
+- [ ] Add prediction analytics dashboard
+- [ ] Create data management interface
+- [ ] Implement error handling and logging
+
+
+## Phase 8: Racing API Integration
+- [x] Integrate racing API credentials for live data fetching
+- [x] Create racing data service with API authentication
+- [x] Implement live meets and races data fetching
+- [x] Add real-time prediction generation for live races
+- [x] Create sync scheduler for continuous data updates
+- [x] Write and pass racing API service tests

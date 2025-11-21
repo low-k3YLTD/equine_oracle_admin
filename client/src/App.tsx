@@ -8,6 +8,8 @@ import Home from "./pages/Home";
 import Dashboard from "./pages/Dashboard";
 import Predictor from "./pages/Predictor";
 import History from "./pages/History";
+import LivePredictor from "./pages/LivePredictor";
+import CSVUpload from "./pages/CSVUpload";
 
 function Router() {
   return (
@@ -16,6 +18,8 @@ function Router() {
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/predictor" component={Predictor} />
       <Route path="/history" component={History} />
+      <Route path="/live" component={LivePredictor} />
+      <Route path="/csv-upload" component={CSVUpload} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

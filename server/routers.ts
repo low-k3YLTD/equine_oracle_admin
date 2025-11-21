@@ -4,6 +4,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { createPrediction, getPredictionsByUserId, getUserSubscription } from "./db";
 import { makePrediction, validatePredictionInput } from "./services/mlPredictionService";
+import { livePredictorRouter } from "./routers/livePredictor";
 
 export const appRouter = router({
   system: systemRouter,
@@ -64,6 +65,10 @@ export const appRouter = router({
         return await getUserSubscription(ctx.user.id);
       }),
   }),
+
+  livePredictor: livePredictorRouter,
 });
 
 export type AppRouter = typeof appRouter;
+
+export default appRouter;
