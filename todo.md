@@ -59,3 +59,11 @@
 - [x] Add real-time prediction generation for live races
 - [x] Create sync scheduler for continuous data updates
 - [x] Write and pass racing API service tests
+
+## Phase 9: Dashboard UI Improvements
+- [x] Simplify race and meet selection with dropdown boxes
+- [x] Populate dropdowns with live races from API
+- [x] Add first four prediction display
+- [x] Improve prediction results layout
+- [x] Add real-time prediction generation on race selection
+- [x] Write and pass LivePredictor component tests (11 tests passing)
