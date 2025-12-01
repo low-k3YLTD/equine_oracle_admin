@@ -67,3 +67,9 @@
 - [x] Improve prediction results layout
 - [x] Add real-time prediction generation on race selection
 - [x] Write and pass LivePredictor component tests (11 tests passing)
+
+## Phase 10: Debug Dropdown Issues
+- [x] Fix dropdown API endpoint calls
+- [x] Verify tRPC procedure calls are working
+- [x] Test meet and race data fetching
+- [x] Fix dropdown selection handlers

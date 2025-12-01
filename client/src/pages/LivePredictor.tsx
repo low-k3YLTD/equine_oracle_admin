@@ -45,125 +45,76 @@ interface Prediction {
 export default function LivePredictor() {
   const [selectedMeet, setSelectedMeet] = useState<string>("");
   const [selectedRace, setSelectedRace] = useState<string>("");
-  const [meets, setMeets] = useState<Meet[]>([]);
   const [races, setRaces] = useState<Race[]>([]);
   const [runners, setRunners] = useState<Runner[]>([]);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [firstFour, setFirstFour] = useState<string[]>([]);
-  const [isLoadingMeets, setIsLoadingMeets] = useState(true);
-  const [isLoadingRaces, setIsLoadingRaces] = useState(false);
-  const [isLoadingPrediction, setIsLoadingPrediction] = useState(false);
 
-  // Fetch meets on component mount
-  useEffect(() => {
-    const fetchMeets = async () => {
-      try {
-        setIsLoadingMeets(true);
-        const response = await fetch("/api/trpc/livePredictor.meets");
-        const data = await response.json();
-        
-        if (data.result?.data) {
-          setMeets(data.result.data);
-          if (data.result.data.length > 0) {
-            setSelectedMeet(data.result.data[0].id);
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching meets:", error);
-      } finally {
-        setIsLoadingMeets(false);
-      }
-    };
-
-    fetchMeets();
-  }, []);
+  // Fetch meets using tRPC
+  const { data: meets = [], isLoading: isLoadingMeets } = trpc.livePredictor.meets.useQuery();
 
   // Fetch races when meet is selected
+  const { data: racesData = [], isLoading: isLoadingRaces } = trpc.livePredictor.races.useQuery(
+    { meetId: selectedMeet },
+    { enabled: !!selectedMeet }
+  );
+
+  // Fetch runners when race is selected
+  const currentRace = racesData.find((r: any) => r.id === selectedRace);
+  const { data: runnersData = [], isLoading: isLoadingRunners } = trpc.livePredictor.runners.useQuery(
+    { meetId: selectedMeet, raceNumber: currentRace?.number || 0 },
+    { enabled: !!selectedMeet && !!currentRace }
+  );
+
+  // Initialize selected meet on first load
   useEffect(() => {
-    if (!selectedMeet) return;
+    if (meets.length > 0 && !selectedMeet) {
+      setSelectedMeet((meets[0] as any).id);
+    }
+  }, [meets, selectedMeet]);
 
-    const fetchRaces = async () => {
-      try {
-        setIsLoadingRaces(true);
-        setRaces([]);
-        setSelectedRace("");
-        setPredictions([]);
-        setFirstFour([]);
-
-        const response = await fetch(
-          `/api/trpc/livePredictor.races?input=${JSON.stringify({ meetId: selectedMeet })}`
-        );
-        const data = await response.json();
-
-        if (data.result?.data) {
-          setRaces(data.result.data);
-          if (data.result.data.length > 0) {
-            setSelectedRace(data.result.data[0].id);
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching races:", error);
-      } finally {
-        setIsLoadingRaces(false);
-      }
-    };
-
-    fetchRaces();
-  }, [selectedMeet]);
-
-  // Fetch runners and generate predictions when race is selected
+  // Update races when meet changes
   useEffect(() => {
-    if (!selectedMeet || !selectedRace) return;
+    setRaces(racesData as Race[]);
+    setSelectedRace("");
+    setPredictions([]);
+    setFirstFour([]);
+  }, [racesData]);
 
-    const fetchRunnersAndPredict = async () => {
-      try {
-        setIsLoadingPrediction(true);
+  // Update runners and generate predictions when race changes
+  useEffect(() => {
+    if (runnersData && runnersData.length > 0) {
+      setRunners(runnersData as Runner[]);
 
-        const race = races.find((r) => r.id === selectedRace);
-        if (!race) return;
+      // Generate mock predictions based on runners
+      const generatedPredictions: Prediction[] = (runnersData as Runner[])
+        .slice(0, 5)
+        .map((runner, idx) => ({
+          position: idx + 1,
+          horse_name: runner.name,
+          horse_id: runner.id,
+          odds: runner.odds || 3.0 + idx,
+          score: 0.75 - idx * 0.08,
+          confidence: Math.round((75 - idx * 10) * 100) / 100,
+        }));
 
-        // Fetch runners
-        const runnersResponse = await fetch(
-          `/api/trpc/livePredictor.runners?input=${JSON.stringify({
-            meetId: selectedMeet,
-            raceNumber: race.number,
-          })}`
-        );
-        const runnersData = await runnersResponse.json();
+      setPredictions(generatedPredictions);
 
-        if (runnersData.result?.data) {
-          setRunners(runnersData.result.data);
+      // Generate first four prediction
+      const topFour = generatedPredictions.slice(0, 4).map((p) => p.horse_name);
+      setFirstFour(topFour);
+    }
+  }, [runnersData]);
 
-          // Generate mock predictions based on runners
-          const generatedPredictions: Prediction[] = runnersData.result.data
-            .slice(0, 5)
-            .map((runner: Runner, idx: number) => ({
-              position: idx + 1,
-              horse_name: runner.name,
-              horse_id: runner.id,
-              odds: runner.odds || 3.0 + idx,
-              score: 0.75 - idx * 0.08,
-              confidence: Math.round((75 - idx * 10) * 100) / 100,
-            }));
+  // Initialize selected race on first load
+  useEffect(() => {
+    if (races.length > 0 && !selectedRace) {
+      setSelectedRace(races[0].id);
+    }
+  }, [races, selectedRace]);
 
-          setPredictions(generatedPredictions);
-
-          // Generate first four prediction
-          const topFour = generatedPredictions.slice(0, 4).map((p) => p.horse_name);
-          setFirstFour(topFour);
-        }
-      } catch (error) {
-        console.error("Error fetching runners:", error);
-      } finally {
-        setIsLoadingPrediction(false);
-      }
-    };
-
-    fetchRunnersAndPredict();
-  }, [selectedMeet, selectedRace, races]);
-
-  const currentRace = races.find((r) => r.id === selectedRace);
   const topThree = predictions.slice(0, 3);
+  const isLoadingPrediction = isLoadingRunners;
 
   return (
     <DashboardLayout>
@@ -188,13 +139,13 @@ export default function LivePredictor() {
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
                 </div>
-              ) : (
+              ) : meets && meets.length > 0 ? (
                 <Select value={selectedMeet} onValueChange={setSelectedMeet}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select a meet..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {meets.map((meet) => (
+                    {(meets as any[]).map((meet) => (
                       <SelectItem key={meet.id} value={meet.id}>
                         <div className="flex items-center gap-2">
                           <span className="font-semibold">{meet.name}</span>
@@ -204,10 +155,12 @@ export default function LivePredictor() {
                     ))}
                   </SelectContent>
                 </Select>
+              ) : (
+                <p className="text-sm text-muted-foreground">No meets available</p>
               )}
-              {selectedMeet && (
+              {selectedMeet && meets && meets.length > 0 && (
                 <p className="text-sm text-muted-foreground mt-4">
-                  {meets.find((m) => m.id === selectedMeet)?.venue}
+                  {(meets as any[]).find((m) => m.id === selectedMeet)?.venue}
                 </p>
               )}
             </CardContent>
@@ -224,7 +177,7 @@ export default function LivePredictor() {
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-6 w-6 animate-spin text-purple-600" />
                 </div>
-              ) : (
+              ) : races && races.length > 0 ? (
                 <Select value={selectedRace} onValueChange={setSelectedRace}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select a race..." />
@@ -241,6 +194,8 @@ export default function LivePredictor() {
                     ))}
                   </SelectContent>
                 </Select>
+              ) : (
+                <p className="text-sm text-muted-foreground">No races available</p>
               )}
               {currentRace && (
                 <div className="mt-4 space-y-2">
