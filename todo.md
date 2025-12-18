@@ -37,22 +37,20 @@
 - [ ] Performance testing
 - [ ] Create checkpoint for deployment
 
-
-## Phase 6: Live Data Integration & CSV Upload
+## Phase 7: Live Data Integration & CSV Upload
 - [ ] Implement LivePredictor page with live race data fetching
 - [ ] Create CSV upload interface for batch predictions
 - [ ] Integrate data validator for CSV validation
 - [ ] Add live data API service integration
 - [ ] Create tRPC procedures for CSV upload and live data
 
-## Phase 7: Advanced Features
+## Phase 8: Advanced Features
 - [ ] Implement sync scheduler for automatic data updates
 - [ ] Add prediction analytics dashboard
 - [ ] Create data management interface
 - [ ] Implement error handling and logging
 
-
-## Phase 8: Racing API Integration
+## Phase 9: Racing API Integration
 - [x] Integrate racing API credentials for live data fetching
 - [x] Create racing data service with API authentication
 - [x] Implement live meets and races data fetching
@@ -60,7 +58,7 @@
 - [x] Create sync scheduler for continuous data updates
 - [x] Write and pass racing API service tests
 
-## Phase 9: Dashboard UI Improvements
+## Phase 10: Dashboard UI Improvements
 - [x] Simplify race and meet selection with dropdown boxes
 - [x] Populate dropdowns with live races from API
 - [x] Add first four prediction display
@@ -68,8 +66,16 @@
 - [x] Add real-time prediction generation on race selection
 - [x] Write and pass LivePredictor component tests (11 tests passing)
 
-## Phase 10: Debug Dropdown Issues
+## Phase 11: Debug Dropdown Issues
 - [x] Fix dropdown API endpoint calls
 - [x] Verify tRPC procedure calls are working
 - [x] Test meet and race data fetching
 - [x] Fix dropdown selection handlers
+
+## Phase 12: Real Prediction Integration & Simplified Display
+- [x] Integrate real ML predictions from ensemble model
+- [x] Fix dropdown functionality for meet and race selection
+- [x] Simplify display to show only top 4 ranked horses
+- [x] Remove individual horse confidence display
+- [x] Display top 4 as ranked list with scores
+- [x] Test prediction generation with real ML model (11 tests passing)
