@@ -1,43 +1,55 @@
-import { useState } from "react";
-import { useAuth } from "@/_core/hooks/useAuth";
+import { useState, useEffect } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-interface PredictionForm {
-  horseName: string;
-  track: string;
-  raceType: string;
+interface RaceOption {
+  id: string;
+  number: number;
+  time: string;
+  name: string;
   distance: string;
-  raceDate: string;
-  daysSinceLastRace: string;
-  winningStreak: string;
-  losingStreak: string;
+  conditions: string;
+}
+
+interface RunnerOption {
+  id: string;
+  number: number;
+  name: string;
+  odds?: number;
 }
 
 export default function Predictor() {
-  const { user } = useAuth();
-  const [form, setForm] = useState<PredictionForm>({
-    horseName: "",
-    track: "",
-    raceType: "Flat",
-    distance: "1600",
-    raceDate: new Date().toISOString().split("T")[0],
-    daysSinceLastRace: "14",
-    winningStreak: "0",
-    losingStreak: "0",
-  });
-
+  const [selectedMeet, setSelectedMeet] = useState<string>("");
+  const [selectedRace, setSelectedRace] = useState<string>("");
+  const [selectedRunner, setSelectedRunner] = useState<string>("");
+  const [races, setRaces] = useState<RaceOption[]>([]);
+  const [runners, setRunners] = useState<RunnerOption[]>([]);
   const [result, setResult] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Fetch meets
+  const { data: meets = [] } = trpc.livePredictor.meets.useQuery();
+
+  // Fetch races when meet is selected
+  const { data: racesData = [] } = trpc.livePredictor.races.useQuery(
+    { meetId: selectedMeet },
+    { enabled: !!selectedMeet }
+  );
+
+  // Fetch runners when race is selected
+  const currentRace = (racesData as any[]).find((r) => r.id === selectedRace);
+  const { data: runnersData = [] } = trpc.livePredictor.runners.useQuery(
+    { meetId: selectedMeet, raceNumber: currentRace?.number || 0 },
+    { enabled: !!selectedMeet && !!currentRace }
+  );
+
+  // Create prediction mutation
   const createPredictionMutation = trpc.predictions.create.useMutation({
     onSuccess: (data) => {
       setResult(data);
@@ -50,29 +62,74 @@ export default function Predictor() {
     },
   });
 
-  const handleInputChange = (field: keyof PredictionForm, value: string) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  };
+  // Initialize selected meet
+  useEffect(() => {
+    if ((meets as any[]).length > 0 && !selectedMeet) {
+      setSelectedMeet((meets as any[])[0].id);
+    }
+  }, [meets, selectedMeet]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Update races when meet changes
+  useEffect(() => {
+    setRaces(racesData as RaceOption[]);
+    setSelectedRace("");
+    setRunners([]);
+    setSelectedRunner("");
+  }, [racesData]);
+
+  // Initialize selected race
+  useEffect(() => {
+    if (races.length > 0 && !selectedRace) {
+      setSelectedRace(races[0].id);
+    }
+  }, [races, selectedRace]);
+
+  // Update runners when race changes
+  useEffect(() => {
+    setRunners(runnersData as RunnerOption[]);
+    setSelectedRunner("");
+  }, [runnersData]);
+
+  // Initialize selected runner
+  useEffect(() => {
+    if (runners.length > 0 && !selectedRunner) {
+      setSelectedRunner(runners[0].id);
+    }
+  }, [runners, selectedRunner]);
+
+  const handleGeneratePrediction = async () => {
+    if (!selectedMeet || !selectedRace || !selectedRunner) {
+      toast.error("Please select a meet, race, and runner");
+      return;
+    }
+
     setIsLoading(true);
 
     try {
+      const selectedRunnerObj = runners.find((r) => r.id === selectedRunner);
+      const selectedRaceObj = races.find((r) => r.id === selectedRace);
+      const selectedMeetObj = (meets as any[]).find((m) => m.id === selectedMeet);
+
+      if (!selectedRunnerObj || !selectedRaceObj || !selectedMeetObj) {
+        throw new Error("Invalid selection");
+      }
+
       const payload = {
-        horseName: form.horseName,
-        track: form.track,
-        raceType: form.raceType,
-        distance: parseInt(form.distance),
-        raceDate: form.raceDate,
-        daysSinceLastRace: form.daysSinceLastRace ? parseInt(form.daysSinceLastRace) : undefined,
-        winningStreak: form.winningStreak ? parseInt(form.winningStreak) : undefined,
-        losingStreak: form.losingStreak ? parseInt(form.losingStreak) : undefined,
+        horseName: selectedRunnerObj.name,
+        track: selectedMeetObj.venue,
+        raceType: "Standard",
+        distance: parseInt(selectedRaceObj.distance) || 1600,
+        raceDate: new Date().toISOString().split("T")[0],
+        daysSinceLastRace: 14,
+        winningStreak: 0,
+        losingStreak: 0,
       };
 
       await createPredictionMutation.mutateAsync(payload);
     } catch (error) {
       console.error("Prediction error:", error);
+      toast.error("Failed to generate prediction");
+      setIsLoading(false);
     }
   };
 
@@ -94,119 +151,92 @@ export default function Predictor() {
         <div className="space-y-2">
           <h1 className="text-3xl font-bold tracking-tight">Prediction Tester</h1>
           <p className="text-muted-foreground">
-            Test the ensemble ML model with race data and get detailed predictions
+            Select a meet, race, and runner to generate a prediction
           </p>
         </div>
 
         <div className="grid gap-6 md:grid-cols-2">
-          {/* Form Section */}
+          {/* Selection Section */}
           <Card>
             <CardHeader>
-              <CardTitle>Race Information</CardTitle>
-              <CardDescription>Enter race details to generate a prediction</CardDescription>
+              <CardTitle>Select Race & Runner</CardTitle>
+              <CardDescription>Choose from available races and runners</CardDescription>
             </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="horseName">Horse Name *</Label>
-                  <Input
-                    id="horseName"
-                    placeholder="e.g., Thunder Runner"
-                    value={form.horseName}
-                    onChange={(e) => handleInputChange("horseName", e.target.value)}
-                    required
-                  />
-                </div>
+            <CardContent className="space-y-6">
+              {/* Meet Selection */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Meet</label>
+                <Select value={selectedMeet} onValueChange={setSelectedMeet}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a meet..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(meets as any[]).map((meet) => (
+                      <SelectItem key={meet.id} value={meet.id}>
+                        {meet.name} - {meet.venue}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="track">Track *</Label>
-                  <Input
-                    id="track"
-                    placeholder="e.g., Flemington"
-                    value={form.track}
-                    onChange={(e) => handleInputChange("track", e.target.value)}
-                    required
-                  />
-                </div>
+              {/* Race Selection */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Race</label>
+                <Select value={selectedRace} onValueChange={setSelectedRace}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a race..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {races.map((race) => (
+                      <SelectItem key={race.id} value={race.id}>
+                        Race {race.number} - {race.time} ({race.distance}m)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="raceType">Race Type *</Label>
-                  <Select value={form.raceType} onValueChange={(value) => handleInputChange("raceType", value)}>
-                    <SelectTrigger id="raceType">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Flat">Flat</SelectItem>
-                      <SelectItem value="Hurdle">Hurdle</SelectItem>
-                      <SelectItem value="Chase">Chase</SelectItem>
-                      <SelectItem value="Steeplechase">Steeplechase</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+              {/* Runner Selection */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Runner</label>
+                <Select value={selectedRunner} onValueChange={setSelectedRunner}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a runner..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {runners.map((runner) => (
+                      <SelectItem key={runner.id} value={runner.id}>
+                        {runner.number}. {runner.name}
+                        {runner.odds && ` (${runner.odds.toFixed(2)})`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="distance">Distance (meters) *</Label>
-                  <Input
-                    id="distance"
-                    type="number"
-                    placeholder="e.g., 1600"
-                    value={form.distance}
-                    onChange={(e) => handleInputChange("distance", e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="raceDate">Race Date *</Label>
-                  <Input
-                    id="raceDate"
-                    type="date"
-                    value={form.raceDate}
-                    onChange={(e) => handleInputChange("raceDate", e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="daysSinceLastRace">Days Since Last Race</Label>
-                  <Input
-                    id="daysSinceLastRace"
-                    type="number"
-                    placeholder="14"
-                    value={form.daysSinceLastRace}
-                    onChange={(e) => handleInputChange("daysSinceLastRace", e.target.value)}
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="winningStreak">Winning Streak</Label>
-                    <Input
-                      id="winningStreak"
-                      type="number"
-                      placeholder="0"
-                      value={form.winningStreak}
-                      onChange={(e) => handleInputChange("winningStreak", e.target.value)}
-                    />
+              {/* Race Details */}
+              {currentRace && (
+                <div className="bg-muted p-4 rounded-lg space-y-2">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Race Name</p>
+                    <p className="font-semibold">{currentRace.name}</p>
                   </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="losingStreak">Losing Streak</Label>
-                    <Input
-                      id="losingStreak"
-                      type="number"
-                      placeholder="0"
-                      value={form.losingStreak}
-                      onChange={(e) => handleInputChange("losingStreak", e.target.value)}
-                    />
+                  <div>
+                    <p className="text-sm text-muted-foreground">Conditions</p>
+                    <p className="font-semibold">{currentRace.conditions}</p>
                   </div>
                 </div>
+              )}
 
-                <Button type="submit" className="w-full" disabled={isLoading}>
-                  {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Generate Prediction
-                </Button>
-              </form>
+              <Button
+                onClick={handleGeneratePrediction}
+                className="w-full"
+                disabled={isLoading || !selectedRunner}
+              >
+                {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Generate Prediction
+              </Button>
             </CardContent>
           </Card>
 
@@ -242,7 +272,7 @@ export default function Predictor() {
                             {probabilityToPercent(result.ensembleProbability)}%
                           </span>
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
                           <div
                             className="bg-blue-600 h-2 rounded-full"
                             style={{ width: `${probabilityToPercent(result.ensembleProbability)}%` }}
@@ -261,7 +291,7 @@ export default function Predictor() {
                           <span>LightGBM</span>
                           <span className="font-semibold">{probabilityToPercent(result.lightgbmProbability)}%</span>
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
                           <div
                             className="bg-purple-600 h-1.5 rounded-full"
                             style={{ width: `${probabilityToPercent(result.lightgbmProbability)}%` }}
@@ -274,7 +304,7 @@ export default function Predictor() {
                           <span>Random Forest</span>
                           <span className="font-semibold">{probabilityToPercent(result.randomForestProbability)}%</span>
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
                           <div
                             className="bg-green-600 h-1.5 rounded-full"
                             style={{ width: `${probabilityToPercent(result.randomForestProbability)}%` }}
@@ -287,7 +317,7 @@ export default function Predictor() {
                           <span>Gradient Boosting</span>
                           <span className="font-semibold">{probabilityToPercent(result.gradientBoostingProbability)}%</span>
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
                           <div
                             className="bg-orange-600 h-1.5 rounded-full"
                             style={{ width: `${probabilityToPercent(result.gradientBoostingProbability)}%` }}
@@ -300,7 +330,7 @@ export default function Predictor() {
                           <span>Logistic Regression</span>
                           <span className="font-semibold">{probabilityToPercent(result.logisticRegressionProbability)}%</span>
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
                           <div
                             className="bg-red-600 h-1.5 rounded-full"
                             style={{ width: `${probabilityToPercent(result.logisticRegressionProbability)}%` }}
@@ -309,34 +339,16 @@ export default function Predictor() {
                       </div>
                     </TabsContent>
                   </Tabs>
-
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => {
-                      setResult(null);
-                      setForm({
-                        horseName: "",
-                        track: "",
-                        raceType: "Flat",
-                        distance: "1600",
-                        raceDate: new Date().toISOString().split("T")[0],
-                        daysSinceLastRace: "14",
-                        winningStreak: "0",
-                        losingStreak: "0",
-                      });
-                    }}
-                  >
-                    New Prediction
-                  </Button>
                 </CardContent>
               </Card>
             ) : (
-              <Card className="h-full">
-                <CardContent className="flex items-center justify-center h-full min-h-96">
-                  <div className="text-center text-muted-foreground">
-                    <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                    <p>Fill in the form and submit to see prediction results</p>
+              <Card>
+                <CardContent className="pt-12 pb-12">
+                  <div className="text-center space-y-2">
+                    <AlertCircle className="h-8 w-8 text-muted-foreground mx-auto" />
+                    <p className="text-muted-foreground">
+                      Select a meet, race, and runner to generate a prediction
+                    </p>
                   </div>
                 </CardContent>
               </Card>

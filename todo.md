@@ -79,3 +79,18 @@
 - [x] Remove individual horse confidence display
 - [x] Display top 4 as ranked list with scores
 - [x] Test prediction generation with real ML model (11 tests passing)
+
+## Phase 13: Simplify Race Details Entry
+- [x] Convert race details form to dropdown-based selection
+- [x] Populate dropdowns with available race options
+- [x] Remove manual form inputs for race parameters
+- [x] Test simplified race selection interface
+
+## Phase 14: Continuous Prediction System Integration
+- [ ] Create Continuous Prediction Agent for autonomous race monitoring
+- [ ] Implement Result Collector for race outcome tracking
+- [ ] Build Auto-Retraining Engine for model improvement
+- [ ] Create Oracle Engine Orchestrator for system coordination
+- [ ] Integrate system startup into server initialization
+- [ ] Add system health monitoring and status endpoints
+- [ ] Write tests for continuous prediction components
