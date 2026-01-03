@@ -152,3 +152,152 @@ export async function getSubscriptionTier(tierName: string) {
     return undefined;
   }
 }
+
+/**
+ * Get prediction count for a user in the last 24 hours
+ */
+export async function getPredictionCountToday(userId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get prediction count: database not available");
+    return 0;
+  }
+
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const result = await db.select().from(predictions).where(
+      (col) => col.userId === userId && col.createdAt >= today
+    );
+    return result.length;
+  } catch (error) {
+    console.error("[Database] Failed to get prediction count:", error);
+    return 0;
+  }
+}
+
+/**
+ * Create multiple predictions in batch
+ */
+export async function createBatchPredictions(predictions_data: InsertPrediction[]): Promise<Prediction[]> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot create batch predictions: database not available");
+    return [];
+  }
+
+  try {
+    await db.insert(predictions).values(predictions_data);
+    return predictions_data as Prediction[];
+  } catch (error) {
+    console.error("[Database] Failed to create batch predictions:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get prediction analytics for a user
+ */
+export async function getPredictionAnalytics(userId: number) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get analytics: database not available");
+    return null;
+  }
+
+  try {
+    const userPredictions = await db.select().from(predictions).where(eq(predictions.userId, userId));
+    
+    if (userPredictions.length === 0) {
+      return {
+        totalPredictions: 0,
+        averageEnsembleScore: 0,
+        highConfidenceCount: 0,
+        topHorses: [],
+        topTracks: [],
+      };
+    }
+
+    const highConfidenceCount = userPredictions.filter(
+      (p) => p.confidence && ['High', 'Very High', 'Medium-High'].includes(p.confidence)
+    ).length;
+
+    const averageEnsembleScore = userPredictions.reduce((sum, p) => sum + (p.ensembleProbability || 0), 0) / userPredictions.length;
+
+    // Get top horses by prediction count
+    const horseMap: Record<string, number> = {};
+    userPredictions.forEach((p) => {
+      horseMap[p.horseName] = (horseMap[p.horseName] || 0) + 1;
+    });
+    const topHorses = Object.entries(horseMap)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5)
+      .map(([name, count]) => ({ name, count }));
+
+    // Get top tracks
+    const trackMap: Record<string, number> = {};
+    userPredictions.forEach((p) => {
+      trackMap[p.track] = (trackMap[p.track] || 0) + 1;
+    });
+    const topTracks = Object.entries(trackMap)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5)
+      .map(([name, count]) => ({ name, count }));
+
+    return {
+      totalPredictions: userPredictions.length,
+      averageEnsembleScore: Math.round(averageEnsembleScore / 100) / 100,
+      highConfidenceCount,
+      topHorses,
+      topTracks,
+    };
+  } catch (error) {
+    console.error("[Database] Failed to get analytics:", error);
+    return null;
+  }
+}
+
+/**
+ * Get predictions with filtering
+ */
+export async function getPredictionsFiltered(
+  userId: number,
+  filters: {
+    track?: string;
+    horseName?: string;
+    startDate?: Date;
+    endDate?: Date;
+    limit?: number;
+  }
+): Promise<Prediction[]> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get filtered predictions: database not available");
+    return [];
+  }
+
+  try {
+    let query = db.select().from(predictions).where(eq(predictions.userId, userId));
+    
+    // Apply filters
+    if (filters.track) {
+      query = query.where(eq(predictions.track, filters.track));
+    }
+    if (filters.horseName) {
+      query = query.where(eq(predictions.horseName, filters.horseName));
+    }
+    if (filters.startDate) {
+      query = query.where((col) => col.createdAt >= filters.startDate!);
+    }
+    if (filters.endDate) {
+      query = query.where((col) => col.createdAt <= filters.endDate!);
+    }
+
+    query = query.orderBy(desc(predictions.createdAt)).limit(filters.limit || 50);
+    return await query;
+  } catch (error) {
+    console.error("[Database] Failed to get filtered predictions:", error);
+    return [];
+  }
+}
