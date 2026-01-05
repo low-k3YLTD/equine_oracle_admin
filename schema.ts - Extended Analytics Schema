@@ -1,0 +1,171 @@
+// schema.ts - Extended Analytics Schema
+import { z } from 'zod';
+
+// ============================================================================
+// EXTENDED ACCURACY METRICS SCHEMA (Phase 2)
+// ============================================================================
+export const accuracyMetricsSchema = z.object({
+  // Core accuracy metrics
+  top1Accuracy: z.number().min(0).max(1).describe('Percentage of winners predicted correctly'),
+  top3HitRate: z.number().min(0).max(1).describe('Percentage of top-3 finishes predicted'),
+  top5HitRate: z.number().min(0).max(1).optional(),
+  ndcg1: z.number().min(0).max(1).default(0).describe('NDCG@1 score'),
+  ndcg3: z.number().min(0).max(1).default(0).describe('NDCG@3 score'),
+  ndcg4: z.number().min(0).max(1).default(0).describe('NDCG@4 score'),
+  
+  // ROI & Market Performance (NEW - Phase 3)
+  roi: z.number().describe('Return on Investment (%)'),
+  marketBeatRate: z.number().min(0).max(1).describe('Rate at which predictions beat market odds'),
+  averageOdds: z.number().positive().optional(),
+  profitLoss: z.number().describe('Total profit/loss in currency units'),
+  sharpeRatio: z.number().optional().describe('Risk-adjusted return metric'),
+  
+  // Calibration metrics
+  calibrationError: z.number().min(0).max(1).default(0).describe('Mean calibration error'),
+  brierScore: z.number().min(0).max(1).optional().describe('Probability calibration score'),
+  
+  // Time & volume
+  evaluationPeriod: z.object({
+    startDate: z.date(),
+    endDate: z.date(),
+    totalRaces: z.number().int().positive(),
+    totalPredictions: z.number().int().positive(),
+  }),
+  
+  // Model-specific performance
+  modelBreakdown: z.array(z.object({
+    modelName: z.string(),
+    accuracy: z.number().min(0).max(1),
+    weight: z.number().min(0).max(1).optional(),
+    status: z.enum(['active', 'deprecated', 'testing']),
+  })).optional(),
+  
+  // Metadata
+  lastUpdated: z.date().default(() => new Date()),
+  dataVersion: z.string().default('v3'),
+});
+
+export type AccuracyMetrics = z.infer<typeof accuracyMetricsSchema>;
+
+// ============================================================================
+// PREDICTION HISTORY SCHEMA
+// ============================================================================
+export const predictionHistorySchema = z.object({
+  id: z.string().uuid(),
+  raceId: z.string(),
+  raceDate: z.date(),
+  trackName: z.string(),
+  trackCode: z.string().optional(),
+  
+  // Horse details
+  horseName: z.string(),
+  horseId: z.string().optional(),
+  jockey: z.string().optional(),
+  trainer: z.string().optional(),
+  
+  // Prediction details
+  predictedPosition: z.number().int().positive(),
+  predictedProbability: z.number().min(0).max(1),
+  confidenceScore: z.number().min(0).max(1),
+  ensembleScore: z.number(),
+  
+  // Actual results
+  actualPosition: z.number().int().positive().nullable(),
+  isWinner: z.boolean().nullable(),
+  isTop3: z.boolean().nullable(),
+  
+  // Market data
+  startingOdds: z.number().positive().nullable(),
+  closingOdds: z.number().positive().nullable(),
+  
+  // Metadata
+  modelVersion: z.string(),
+  createdAt: z.date().default(() => new Date()),
+  updatedAt: z.date().nullable(),
+});
+
+export type PredictionHistory = z.infer<typeof predictionHistorySchema>;
+
+// ============================================================================
+// FILTER SCHEMA
+// ============================================================================
+export const predictionFilterSchema = z.object({
+  trackName: z.string().optional(),
+  trackCode: z.string().optional(),
+  horseName: z.string().optional(),
+  dateFrom: z.date().optional(),
+  dateTo: z.date().optional(),
+  minConfidence: z.number().min(0).max(1).optional(),
+  resultStatus: z.enum(['all', 'won', 'top3', 'pending']).default('all'),
+  page: z.number().int().positive().default(1),
+  pageSize: z.number().int().positive().max(100).default(25),
+  sortBy: z.enum(['date', 'confidence', 'odds', 'result']).default('date'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+});
+
+export type PredictionFilter = z.infer<typeof predictionFilterSchema>;
+
+// ============================================================================
+// CSV UPLOAD SCHEMA
+// ============================================================================
+export const csvUploadSchema = z.object({
+  fileName: z.string(),
+  fileSize: z.number().positive(),
+  rowCount: z.number().int().nonnegative(),
+  columnCount: z.number().int().positive(),
+  uploadedAt: z.date().default(() => new Date()),
+  processingStatus: z.enum(['pending', 'processing', 'completed', 'failed']),
+  errorMessage: z.string().optional(),
+  validationResults: z.object({
+    validRows: z.number().int().nonnegative(),
+    invalidRows: z.number().int().nonnegative(),
+    warnings: z.array(z.string()).optional(),
+  }).optional(),
+});
+
+export type CsvUpload = z.infer<typeof csvUploadSchema>;
+
+// ============================================================================
+// ANALYTICS DASHBOARD DATA SCHEMA
+// ============================================================================
+export const analyticsDashboardSchema = z.object({
+  overview: accuracyMetricsSchema,
+  
+  // Time-series performance
+  performanceTrend: z.array(z.object({
+    date: z.date(),
+    top1Accuracy: z.number(),
+    roi: z.number(),
+    racesCount: z.number().int(),
+  })),
+  
+  // Track-level breakdown
+  trackPerformance: z.array(z.object({
+    trackName: z.string(),
+    racesCount: z.number().int(),
+    top1Accuracy: z.number(),
+    roi: z.number(),
+    marketBeatRate: z.number(),
+  })),
+  
+  // Model ensemble health
+  modelHealth: z.array(z.object({
+    modelName: z.string(),
+    status: z.enum(['healthy', 'degraded', 'failed']),
+    lastPredictionTime: z.date(),
+    avgLatency: z.number().positive(),
+    errorRate: z.number().min(0).max(1),
+  })),
+  
+  // Alerts & anomalies
+  alerts: z.array(z.object({
+    id: z.string(),
+    severity: z.enum(['info', 'warning', 'critical']),
+    type: z.enum(['performance_degradation', 'data_quality', 'model_drift', 'system']),
+    message: z.string(),
+    timestamp: z.date(),
+    acknowledged: z.boolean().default(false),
+  })),
+});
+
+export type AnalyticsDashboard = z.infer<typeof analyticsDashboardSchema>;
