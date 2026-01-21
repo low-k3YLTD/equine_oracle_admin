@@ -1,6 +1,7 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
+import { godTierRouter } from "./routers/godTierRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { createPrediction, getPredictionsByUserId, getUserSubscription, getPredictionAnalytics, getPredictionsFiltered, createBatchPredictions } from "./db";
 import { makePrediction, validatePredictionInput } from "./services/mlPredictionService";
@@ -154,6 +155,8 @@ export const appRouter = router({
   }),
 
   livePredictor: livePredictorRouter,
+
+  godTier: godTierRouter,
 
   analytics: router({
     dashboard: protectedProcedure
