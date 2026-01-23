@@ -3,6 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Trophy } from "lucide-react";
 import DashboardLayout from "@/components/DashboardLayout";
+import BettingSlip from "@/components/BettingSlip";
+import MetricsDashboard from "@/components/MetricsDashboard";
 import { trpc } from "@/lib/trpc";
 
 interface Meet {
@@ -45,6 +47,7 @@ export default function LivePredictor() {
   const [selectedRace, setSelectedRace] = useState<string>("");
   const [races, setRaces] = useState<Race[]>([]);
   const [topFour, setTopFour] = useState<TopFourPrediction[]>([]);
+  const [showMetrics, setShowMetrics] = useState(false);
 
   // Fetch meets using tRPC
   const { data: meets = [], isLoading: isLoadingMeets } = trpc.livePredictor.meets.useQuery();
