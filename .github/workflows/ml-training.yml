@@ -1,0 +1,309 @@
+name: ML Model Training Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ml/**'
+      - 'core_ensemble.py'
+      - 'exotic_bet_engine.py'
+  schedule:
+    # Run weekly retraining every Sunday at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      retrain_all:
+        description: 'Retrain all models'
+        required: false
+        default: 'false'
+      specific_model:
+        description: 'Specific model to retrain'
+        required: false
+        default: ''
+
+concurrency:
+  group: ml-training-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: '3.11'
+  POETRY_VERSION: '1.8.3'
+
+jobs:
+  train:
+    name: Train Models
+    runs-on: [self-hosted, linux, GPU]  # Use GPU runner if available, falls back to CPU
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'poetry'
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pypoetry
+            ~/.local
+          key: ml-deps-${{ hashFiles('**/requirements.txt', '**/pyproject.toml') }}
+          restore-keys: ml-deps-
+
+      - name: Install ML dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ml/requirements.txt
+          pip install poetry
+          poetry config virtualenvs.create false
+
+      - name: Setup MySQL for training data
+        uses: mysql/mysql-container-action@v1
+        with:
+          mysql version: '8.0'
+          mysql database: 'equine_oracle_training'
+          mysql user: 'ml_user'
+          mysql password: 'ml_password'
+          mysql root password: 'root_password'
+          mysql port: 3306
+
+      - name: Wait for MySQL
+        run: |
+          for i in {1..15}; do
+            if mysql -h 127.0.0.1 -P 3306 -uroot -proot_password -e "SELECT 1" 2>/dev/null; then
+              echo "MySQL is ready"
+              break
+            fi
+            echo "Waiting for MySQL... ($i/15)"
+            sleep 5
+          done
+
+      - name: Load training data
+        run: |
+          # Create training database schema
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot_password equine_oracle_training < ml/data/schema.sql || true
+          # Import training data
+          python ml/data/load_training_data.py
+
+      - name: Train base models
+        run: |
+          python -c "
+          from core_ensemble import GodTierEnsemble
+          import pandas as pd
+          import joblib
+          
+          # Load training data
+          df = pd.read_csv('ml/data/training_data.csv')
+          
+          # Initialize and train ensemble
+          ensemble = GodTierEnsemble()
+          ensemble.train(df, target_col='result')
+          
+          # Save trained models
+          joblib.dump(ensemble, 'ml/models/god_tier_ensemble.pkl')
+          
+          # Evaluate
+          metrics = ensemble.evaluate(df['result'].values, ensemble.predict(df))
+          print(f'Training NDCG: {metrics[\"ndcg\"]}')
+          print(f'Training MSE: {metrics[\"mse\"]}')
+          
+          # Save metrics
+          import json
+          with open('ml/models/training_metrics.json', 'w') as f:
+              json.dump(metrics, f)
+          " 2>&1 | tee training_log.txt
+
+      - name: Train weighted ensemble
+        run: |
+          python -c "
+          from ml.ensemble.weighted_ensemble import WeightedEnsemble, EnsembleOptimizer
+          from ml.models.model_registry import ModelRegistry
+          import numpy as np
+          import joblib
+          
+          # Load models from registry
+          registry = ModelRegistry()
+          models = registry.load_all_models()
+          
+          # Create weighted ensemble
+          ensemble = WeightedEnsemble(models)
+          
+          # Load validation data
+          import pandas as pd
+          val_df = pd.read_csv('ml/data/validation_data.csv')
+          X_val = val_df.drop(columns=['result']).values
+          y_val = val_df['result'].values
+          
+          # Optimize weights
+          optimizer = EnsembleOptimizer(ensemble)
+          optimized_weights = optimizer.optimize_weights(
+              X_val, y_val, X_val, y_val, 
+              metric='ndcg_at_1',
+              n_iterations=200
+          )
+          
+          print(f'Optimized weights: {optimized_weights}')
+          
+          # Save optimized ensemble
+          joblib.dump(ensemble, 'ml/models/weighted_ensemble_optimized.pkl')
+          " 2>&1 | tee weighted_ensemble_log.txt
+
+      - name: Upload trained models
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-models
+          path: |
+            ml/models/
+            training_log.txt
+            weighted_ensemble_log.txt
+          retention-days: 30
+
+      - name: Push models to S3
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # Install AWS CLI
+          pip install awscli
+          
+          # Configure AWS
+          mkdir -p ~/.aws
+          echo "[default]" > ~/.aws/config
+          echo "aws_access_key_id = ${{ secrets.AWS_ACCESS_KEY_ID }}" >> ~/.aws/credentials
+          echo "aws_secret_access_key = ${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> ~/.aws/credentials
+          
+          # Upload models to S3
+          aws s3 sync ml/models/ s3://equine-oracle-models/${{ github.sha }}/ --exclude "*" --include "*.pkl" --include "*.json"
+          
+          # Update latest tag
+          aws s3 sync ml/models/ s3://equine-oracle-models/latest/ --exclude "*" --include "*.pkl" --include "*.json"
+
+  evaluate:
+    name: Model Evaluation
+    needs: train
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download trained models
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-models
+          path: ml/models/
+
+      - name: Install dependencies
+        run: pip install -r ml/requirements.txt pandas numpy scikit-learn
+
+      - name: Run evaluation
+        run: |
+          python -c "
+          import joblib
+          import pandas as pd
+          import numpy as np
+          from sklearn.metrics import ndcg_score, mean_squared_error, accuracy_score
+          
+          # Load test data
+          test_df = pd.read_csv('ml/data/test_data.csv')
+          X_test = test_df.drop(columns=['result']).values
+          y_test = test_df['result'].values
+          
+          # Load ensemble
+          ensemble = joblib.load('ml/models/god_tier_ensemble.pkl')
+          
+          # Generate predictions
+          y_pred = ensemble.predict(test_df)
+          
+          # Calculate metrics
+          ndcg_1 = ndcg_score([np.arange(len(y_test))], [y_pred], k=1)
+          ndcg_3 = ndcg_score([np.arange(len(y_test))], [y_pred], k=3)
+          mse = mean_squared_error(y_test, y_pred)
+          
+          print(f'Test NDCG@1: {ndcg_1:.4f}')
+          print(f'Test NDCG@3: {ndcg_3:.4f}')
+          print(f'Test MSE: {mse:.4f}')
+          
+          # Save evaluation results
+          results = {
+              'ndcg_at_1': float(ndcg_1),
+              'ndcg_at_3': float(ndcg_3),
+              'mse': float(mse),
+              'timestamp': pd.Timestamp.now().isoformat()
+          }
+          
+          import json
+          with open('evaluation_results.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          
+          # Check if model meets quality thresholds
+          if ndcg_1 < 0.97:
+              print('::error::Model NDCG@1 below threshold (0.97)')
+              exit(1)
+          " 2>&1 | tee evaluation_log.txt
+
+      - name: Upload evaluation results
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-results
+          path: |
+            evaluation_results.json
+            evaluation_log.txt
+
+      - name: Update model registry
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # Update model registry with new metrics
+          python -c "
+          import json
+          import requests
+          
+          with open('evaluation_results.json') as f:
+              results = json.load(f)
+          
+          # Send to model registry API
+          registry_url = '${{ secrets.MODEL_REGISTRY_URL }}'
+          response = requests.post(f'{registry_url}/models/register', json={
+              'model_name': 'god_tier_ensemble',
+              'version': '${{ github.sha }}',
+              'metrics': results,
+              'commit': '${{ github.sha }}'
+          })
+          
+          print(f'Registry response: {response.status_code}')
+          print(response.text)
+          " 2>&1 || echo "Model registry update skipped"
+
+  notify:
+    name: Notify Training Results
+    needs: [train, evaluate]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download evaluation results
+        uses: actions/download-artifact@v4
+        with:
+          name: evaluation-results
+          path: ./
+
+      - name: Send Discord notification
+        uses: Ilshidur/action-discord@0.6.8
+        with:
+          args: "🎯 ML Training ${{ job.status }}: ${{ github.ref }}. NDCG@1: ${{ steps.eval.outputs.ndcg_1 || 'N/A' }}. View: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
