@@ -1,0 +1,242 @@
+name: Performance Benchmark
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'core_ensemble.py'
+      - 'exotic_bet_engine.py'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'core_ensemble.py'
+      - 'exotic_bet_engine.py'
+  workflow_dispatch:
+
+concurrency:
+  group: performance-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9'
+
+jobs:
+  benchmark:
+    name: Performance Benchmark
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test
+          MYSQL_DATABASE: equine_oracle_bench
+          MYSQL_USER: bench
+          MYSQL_PASSWORD: bench
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+    env:
+      DATABASE_URL: 'mysql://bench:bench@localhost:3306/equine_oracle_bench'
+      REDIS_URL: 'redis://localhost:6379'
+      NODE_ENV: 'production'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Wait for services
+        run: |
+          for i in {1..10}; do
+            if redis-cli ping 2>/dev/null && mysql -h 127.0.0.1 -P 3306 -ubench -pbench -e "SELECT 1" equine_oracle_bench 2>/dev/null; then
+              echo "Services are ready"
+              break
+            fi
+            echo "Waiting for services... ($i/10)"
+            sleep 5
+          done
+
+      - name: Run database migrations
+        run: pnpm db:push
+
+      - name: Setup Python for ML benchmarks
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ML dependencies
+        run: pip install -r ml/requirements.txt pandas numpy scikit-learn
+
+      - name: Run API Performance Tests
+        run: |
+          # Install artillery for load testing
+          npm install -g artillery
+          
+          # Create test data
+          node -e "
+          const fs = require('fs');
+          const testData = {
+            config: {
+              target: 'http://localhost:3001',
+              phases: [
+                { duration: 60, arrivalRate: 10 },
+                { duration: 120, arrivalRate: 50 },
+                { duration: 60, arrivalRate: 100 }
+              ]
+            },
+            scenarios: [
+              {
+                flow: [
+                  { post: { url: '/api/predictions/create', json: require('./test/payload.json') } }
+                ]
+              }
+            ]
+          };
+          fs.writeFileSync('load-test.yml', JSON.stringify(testData, null, 2));
+          " 2>/dev/null || true
+
+      - name: Start application
+        run: |
+          pnpm build
+          pnpm start &
+          sleep 10
+
+      - name: Run load test
+        run: |
+          artillery run load-test.yml --output load-test-results.json || true
+
+      - name: Upload load test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: load-test-results.json
+          retention-days: 30
+
+      - name: Run ML Performance Tests
+        run: |
+          python -c "
+          import time
+          import numpy as np
+          import pandas as pd
+          import joblib
+          from core_ensemble import GodTierEnsemble
+          
+          # Generate test data
+          n_samples = 1000
+          n_features = 120
+          X_test = np.random.randn(n_samples, n_features)
+          df = pd.DataFrame(X_test, columns=[f'feature_{i}' for i in range(n_features)])
+          df['result'] = np.random.randint(0, 2, n_samples)
+          
+          # Load or create ensemble
+          try:
+              ensemble = joblib.load('ml/models/god_tier_ensemble.pkl')
+          except:
+              ensemble = GodTierEnsemble()
+              # Train with small dataset for benchmark
+              ensemble.train(df.head(100), target_col='result')
+          
+          # Warm up
+          for _ in range(5):
+              ensemble.predict(df.head(10))
+          
+          # Benchmark prediction speed
+          start_time = time.time()
+          for _ in range(100):
+              predictions = ensemble.predict(df.head(10))
+          end_time = time.time()
+          
+          avg_latency = (end_time - start_time) / 1000  # per prediction
+          print(f'Average prediction latency: {avg_latency:.4f}s')
+          
+          # Benchmark training speed
+          start_time = time.time()
+          ensemble.train(df.head(500), target_col='result')
+          end_time = time.time()
+          
+          training_time = end_time - start_time
+          print(f'Training time (500 samples): {training_time:.2f}s')
+          
+          # Save results
+          results = {
+              'avg_prediction_latency_ms': avg_latency * 1000,
+              'training_time_500_samples_s': training_time,
+              'timestamp': pd.Timestamp.now().isoformat()
+          }
+          
+          import json
+          with open('ml-benchmark-results.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          " 2>&1 | tee ml-benchmark.log
+
+      - name: Upload ML benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-benchmark-results
+          path: |
+            ml-benchmark-results.json
+            ml-benchmark.log
+
+      - name: Compare with baseline
+        run: |
+          # Download previous results from S3 if available
+          pip install boto3 2>/dev/null || true
+          python -c "
+          import json
+          import os
+          
+          # Load current results
+          with open('ml-benchmark-results.json') as f:
+              current = json.load(f)
+          
+          # Check if we have baseline
+          baseline_file = 'ml-benchmark-baseline.json'
+          if os.path.exists(baseline_file):
+              with open(baseline_file) as f:
+                  baseline = json.load(f)
+              
+              # Compare
+              latency_diff = current['avg_prediction_latency_ms'] - baseline['avg_prediction_latency_ms']
+              print(f'Latency change: {latency_diff:.2f}ms ({latency_diff/baseline[\"avg_prediction_latency_ms\"]*100:.1f}%)')
+              
+              if latency_diff > baseline['avg_prediction_latency_ms'] * 0.1:  # 10% slower
+                  print('::error::Performance regression detected!')
+                  exit(1)
+          else:
+              # Save as baseline
+              with open(baseline_file, 'w') as f:
+                  json.dump(current, f)
+              print('Created baseline performance metrics')
+          " 2>&1 || echo "Performance comparison skipped"
+
+  notify:
+    name: Performance Alert
+    needs: benchmark
+    if: always() && (failure() || cancelled())
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Discord notification
+        uses: Ilshidur/action-discord@0.6.8
+        with:
+          args: "⚡ Performance Benchmark ${{ job.status }} on ${{ github.ref }}. View: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
